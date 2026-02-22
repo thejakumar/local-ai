@@ -1,0 +1,12 @@
+{
+  "profiles": {
+    "LocalAI.API": {
+      "commandName": "Project",
+      "launchBrowser": true,
+      "environmentVariables": {
+        "ASPNETCORE_ENVIRONMENT": "Development"
+      },
+      "applicationUrl": "https://localhost:60145;http://localhost:60146"
+    }
+  }
+}
