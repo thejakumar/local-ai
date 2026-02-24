@@ -61,8 +61,8 @@ public class ChatController(
 
         if (request.UseRag)
         {
-            sources = await rag.SearchAsync(request.Message, ct: ct);
-            ragContext = await rag.BuildContextAsync(request.Message, ct);
+            sources = await rag.SearchAsync(request.Message, request.RagMode, ct: ct);
+            ragContext = await rag.BuildContextAsync(request.Message, request.RagMode, ct);
         }
 
         // Build message history for Ollama

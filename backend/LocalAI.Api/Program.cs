@@ -25,6 +25,7 @@ builder.Services.AddHttpClient("ollama", client =>
 // ── Services ──────────────────────────────────────────
 builder.Services.AddScoped<IOllamaService, OllamaService>();
 builder.Services.AddScoped<IEmbeddingService, EmbeddingService>();
+builder.Services.AddScoped<IChunkingService, ChunkingService>();
 builder.Services.AddScoped<IRagService, RagService>();
 
 // ── CORS (Angular dev server) ─────────────────────────

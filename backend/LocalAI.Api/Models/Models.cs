@@ -9,10 +9,17 @@ public class Document
 {
     public Guid Id { get; set; } = Guid.NewGuid();
     public string FileName { get; set; } = "";
-    public string FileType { get; set; } = "";   // code | pdf | text
+    public string FileType { get; set; } = "";   // code | pdf | text | markdown
     public int ChunkIndex { get; set; }
     public string Content { get; set; } = "";
     public Vector? Embedding { get; set; }
+    
+    /// <summary>
+    /// PostgreSQL tsvector for full-text search (BM25-like)
+    /// </summary>
+    [JsonIgnore]
+    public string SearchVector { get; set; } = "";
+    
     public Dictionary<string, string> Metadata { get; set; } = [];
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 }
@@ -44,6 +51,7 @@ public record ChatRequest(
     Guid? ConversationId,
     string Message,
     bool UseRag = true,
+    string? RagMode = "hybrid",  // hybrid | semantic | keyword
     string? Model = null
 );
 
@@ -66,7 +74,8 @@ public record ChatResponse(
 public record RagSource(
     string FileName,
     string Snippet,
-    double Similarity
+    double Similarity,
+    string SearchType = "semantic"  // semantic | keyword | hybrid
 );
 
 public record ConversationSummary(
