@@ -1,8 +1,13 @@
 using LocalAI.Api.Data;
 using LocalAI.Api.Middleware;
+using LocalAI.Api.Services.Context;
 using LocalAI.Api.Services.Embedding;
 using LocalAI.Api.Services.Ollama;
+using LocalAI.Api.Services.Prompts;
+using LocalAI.Api.Services.Quality;
 using LocalAI.Api.Services.Rag;
+using LocalAI.Api.Services.Retrieval;
+using LocalAI.Api.Services.Token;
 using Microsoft.EntityFrameworkCore;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -22,11 +27,27 @@ builder.Services.AddHttpClient("ollama", client =>
     client.Timeout = TimeSpan.FromMinutes(5);
 });
 
-// ── Services ──────────────────────────────────────────
+// ── Core Services ─────────────────────────────────────
 builder.Services.AddScoped<IOllamaService, OllamaService>();
 builder.Services.AddScoped<IEmbeddingService, EmbeddingService>();
 builder.Services.AddScoped<IChunkingService, ChunkingService>();
 builder.Services.AddScoped<IRagService, RagService>();
+
+// ── Advanced Retrieval Pipeline ───────────────────────
+builder.Services.AddScoped<IHydeService, HydeService>();
+builder.Services.AddScoped<IQueryExpansionService, QueryExpansionService>();
+builder.Services.AddScoped<IRerankingService, RerankingService>();
+builder.Services.AddScoped<IRetrievalPipeline, RetrievalPipeline>();
+
+// ── Context Optimization ──────────────────────────────
+builder.Services.AddScoped<IPromptTemplateService, PromptTemplateService>();
+builder.Services.AddScoped<ITokenBudgetService, TokenBudgetService>();
+builder.Services.AddScoped<IConversationSummaryService, ConversationSummaryService>();
+builder.Services.AddScoped<IContextCompressionService, ContextCompressionService>();
+
+// ── Quality Assurance ─────────────────────────────────
+builder.Services.AddScoped<IConfidenceScorer, ConfidenceScorer>();
+builder.Services.AddScoped<ICitationVerifier, CitationVerifier>();
 
 // ── CORS (Angular dev server) ─────────────────────────
 builder.Services.AddCors(opts =>
@@ -48,10 +69,10 @@ var app = builder.Build();
 using (var scope = app.Services.CreateScope())
 {
     var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-    await db.Database.EnsureCreatedAsync();
+    await db.Database.MigrateAsync();
 }
 
-app.UseSwagger();       // ← Add these 3 lines
+app.UseSwagger();
 app.UseSwaggerUI();
 app.MapSwagger();
 

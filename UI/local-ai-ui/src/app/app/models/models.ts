@@ -2,13 +2,30 @@ export interface ChatRequest {
   conversationId?: string;
   message: string;
   useRag?: boolean;
+  ragMode?: string;
   model?: string;
+  fileTypeFilter?: string;
+  fileNameFilter?: string;
 }
 
 export interface RagSource {
   fileName: string;
   snippet: string;
   similarity: number;
+  searchType?: string;
+}
+
+export interface ConfidenceResult {
+  overall: number;
+  level: string;
+  retrievalQuality: number;
+  sourceCoverage: number;
+}
+
+export interface CitationCheck {
+  fileName: string;
+  verified: boolean;
+  reason?: string;
 }
 
 export interface Message {
@@ -20,6 +37,9 @@ export interface Message {
   createdAt?: string;
   sources?: RagSource[];
   streaming?: boolean;
+  confidence?: ConfidenceResult;
+  citations?: CitationCheck[];
+  tokensUsed?: number;
 }
 
 export interface Conversation {
@@ -27,6 +47,7 @@ export interface Conversation {
   title: string;
   messages: Message[];
   updatedAt: string;
+  summary?: string;
 }
 
 export interface ConversationSummary {
@@ -58,6 +79,9 @@ export interface SseTokenEvent {
 export interface SseDoneEvent {
   type: 'done';
   messageId: string;
+  confidence?: ConfidenceResult;
+  citations?: CitationCheck[];
+  tokensUsed?: number;
 }
 
 export type SseEvent = SseMetaEvent | SseTokenEvent | SseDoneEvent;

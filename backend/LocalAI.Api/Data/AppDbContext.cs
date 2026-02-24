@@ -9,14 +9,12 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
     public DbSet<Document> Documents => Set<Document>();
     public DbSet<Conversation> Conversations => Set<Conversation>();
     public DbSet<Message> Messages => Set<Message>();
+    public DbSet<MessageFeedback> MessageFeedbacks => Set<MessageFeedback>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
-        // pgvector extension for semantic search
         modelBuilder.HasPostgresExtension("vector");
-        
-        // Enable full-text search
-        modelBuilder.HasPostgresExtension("pg_trgm"); // trigram for fuzzy matching
+        modelBuilder.HasPostgresExtension("pg_trgm");
 
         modelBuilder.Entity<Document>(e =>
         {
@@ -24,13 +22,19 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
             e.Property(d => d.Embedding).HasColumnType("vector(768)");
             e.HasIndex(d => d.FileName);
 
-            // GIN index for full-text search on SearchVector - requires gin_trgm_ops operator class
+            // Parent-child chunking
+            e.Property(d => d.ParentChunkId);
+            e.Property(d => d.ChunkLevel).HasDefaultValue(0);
+            e.HasIndex(d => d.ParentChunkId).HasDatabaseName("idx_document_parent");
+            e.HasIndex(d => d.ChunkLevel).HasDatabaseName("idx_document_level");
+
+            // GIN index for trigram search on SearchVector
             e.HasIndex(d => d.SearchVector)
                 .HasMethod("GIN")
                 .HasOperators("gin_trgm_ops")
                 .HasDatabaseName("idx_document_search");
 
-            // GIN index for trigram search (fuzzy matching) - requires gin_trgm_ops operator class
+            // GIN index for trigram search on content
             e.HasIndex(d => d.Content)
                 .HasMethod("GIN")
                 .HasOperators("gin_trgm_ops")
@@ -50,6 +54,16 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
         {
             e.HasKey(m => m.Id);
             e.HasIndex(m => m.ConversationId);
+        });
+
+        modelBuilder.Entity<MessageFeedback>(e =>
+        {
+            e.HasKey(f => f.Id);
+            e.HasOne(f => f.Message)
+             .WithMany()
+             .HasForeignKey(f => f.MessageId)
+             .OnDelete(DeleteBehavior.Cascade);
+            e.HasIndex(f => f.MessageId).HasDatabaseName("idx_feedback_message");
         });
     }
 }

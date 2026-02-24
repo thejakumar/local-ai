@@ -1,7 +1,11 @@
 using LocalAI.Api.Data;
 using LocalAI.Api.Models;
+using LocalAI.Api.Services.Context;
 using LocalAI.Api.Services.Ollama;
-using LocalAI.Api.Services.Rag;
+using LocalAI.Api.Services.Prompts;
+using LocalAI.Api.Services.Quality;
+using LocalAI.Api.Services.Retrieval;
+using LocalAI.Api.Services.Token;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using System.Text;
@@ -14,12 +18,17 @@ namespace LocalAI.Api.Controllers;
 public class ChatController(
     AppDbContext db,
     IOllamaService ollama,
-    IRagService rag,
+    IRetrievalPipeline retrievalPipeline,
+    IPromptTemplateService promptTemplate,
+    ITokenBudgetService tokenBudget,
+    IConversationSummaryService conversationSummary,
+    IContextCompressionService contextCompression,
+    IConfidenceScorer confidenceScorer,
+    ICitationVerifier citationVerifier,
     IConfiguration config) : ControllerBase
 {
     private readonly string _defaultModel = config["Ollama:ChatModel"] ?? "llama3.2";
 
-    // ── POST /api/chat/stream  (SSE streaming) ───────
     [HttpPost("stream")]
     public async Task StreamChat([FromBody] ChatRequest request, CancellationToken ct)
     {
@@ -55,45 +64,69 @@ public class ChatController(
         };
         db.Messages.Add(userMessage);
 
-        // Build RAG context if enabled
-        string ragContext = "";
+        // Build RAG context using advanced retrieval pipeline
         List<RagSource> sources = [];
+        string ragContext = "";
 
         if (request.UseRag)
         {
-            sources = await rag.SearchAsync(request.Message, request.RagMode, ct: ct);
-            ragContext = await rag.BuildContextAsync(request.Message, request.RagMode, ct);
+            var retrievalOptions = new RetrievalOptions(
+                SearchMode: request.RagMode ?? "hybrid",
+                TopK: 5,
+                EnableQueryExpansion: true,
+                EnableHyde: true,
+                EnableReranking: true,
+                FileTypeFilter: request.FileTypeFilter,
+                FileNameFilter: request.FileNameFilter
+            );
+
+            sources = await retrievalPipeline.RetrieveAsync(request.Message, retrievalOptions, ct);
+
+            // Context compression (if enabled)
+            sources = await contextCompression.CompressSourcesAsync(request.Message, sources, ct);
+
+            ragContext = string.Join("\n\n", sources.Select((s, i) =>
+                $"[Source {i + 1}: {s.FileName} (relevance: {s.Similarity:F2})]\n{s.Snippet}"));
         }
 
-        // Build message history for Ollama
+        // Build system prompt with behavioral instructions + RAG context
+        var systemPrompt = promptTemplate.BuildSystemPrompt(
+            string.IsNullOrWhiteSpace(ragContext) ? null : ragContext,
+            request.Message);
+
+        // Get conversation summary for long chats
+        string? summary = null;
+        if (conversationSummary.NeedsSummarization(conversation))
+        {
+            summary = await conversationSummary.GetOrCreateSummaryAsync(conversation, ct);
+        }
+
+        // Build message history
         var history = (conversation.Messages ?? [])
             .Where(m => m.Id != userMessage.Id)
             .OrderBy(m => m.CreatedAt)
-            .TakeLast(10)   // last 10 messages for context window
             .Select(m => new OllamaMessage(m.Role, m.Content))
             .ToList();
 
-        // Inject RAG context into system prompt
-        var systemPrompt = ragContext.Length > 0
-            ? ragContext
-            : "You are a helpful AI assistant running locally on the user's machine.";
+        // Apply token budget management
+        var budget = tokenBudget.AllocateBudget(systemPrompt, request.Message, history, ragContext);
+        history = tokenBudget.TrimHistory(history, budget.HistoryTokens);
 
-        // var messages = new List<OllamaMessage>
-        // {
-        //     new("system", systemPrompt),
-        //     ..history,
-        //     new("user", request.Message)
-        // };
-
+        // Build final messages list
         var messages = new List<OllamaMessage>();
-        messages.Add(new OllamaMessage("system", systemPrompt));
+
+        if (summary != null)
+            messages.Add(new OllamaMessage("system", systemPrompt + $"\n\nPrevious conversation context: {summary}"));
+        else
+            messages.Add(new OllamaMessage("system", systemPrompt));
+
         messages.AddRange(history);
         messages.Add(new OllamaMessage("user", request.Message));
 
         // Stream tokens via SSE
         var fullResponse = new StringBuilder();
 
-        // First event: metadata (conversationId + sources)
+        // First event: metadata
         var meta = JsonSerializer.Serialize(new
         {
             type = "meta",
@@ -116,30 +149,39 @@ public class ChatController(
             await Response.Body.FlushAsync(ct);
         }
 
+        var responseText = fullResponse.ToString();
+
+        // Compute confidence and verify citations
+        var confidence = confidenceScorer.Score(responseText, sources);
+        var citations = citationVerifier.VerifyCitations(responseText, sources);
+
         // Save assistant response
         var assistantMessage = new Message
         {
             ConversationId = conversation.Id,
             Role = "assistant",
-            Content = fullResponse.ToString(),
-            Model = model
+            Content = responseText,
+            Model = model,
+            TokensUsed = tokenBudget.EstimateTokens(responseText)
         };
         db.Messages.Add(assistantMessage);
         conversation.UpdatedAt = DateTime.UtcNow;
 
         await db.SaveChangesAsync(ct);
 
-        // Final done event
+        // Final done event with quality metadata
         var doneEvent = JsonSerializer.Serialize(new
         {
             type = "done",
-            messageId = assistantMessage.Id
+            messageId = assistantMessage.Id,
+            confidence = new { confidence.Overall, confidence.Level, confidence.RetrievalQuality, confidence.SourceCoverage },
+            citations,
+            tokensUsed = assistantMessage.TokensUsed
         });
         await Response.WriteAsync($"data: {doneEvent}\n\n", ct);
         await Response.Body.FlushAsync(ct);
     }
 
-    // ── GET /api/chat/conversations ──────────────────
     [HttpGet("conversations")]
     public async Task<IActionResult> GetConversations(CancellationToken ct)
     {
@@ -157,7 +199,6 @@ public class ChatController(
         return Ok(convos);
     }
 
-    // ── GET /api/chat/conversations/{id} ─────────────
     [HttpGet("conversations/{id:guid}")]
     public async Task<IActionResult> GetConversation(Guid id, CancellationToken ct)
     {
@@ -168,7 +209,6 @@ public class ChatController(
         return convo is null ? NotFound() : Ok(convo);
     }
 
-    // ── DELETE /api/chat/conversations/{id} ──────────
     [HttpDelete("conversations/{id:guid}")]
     public async Task<IActionResult> DeleteConversation(Guid id, CancellationToken ct)
     {

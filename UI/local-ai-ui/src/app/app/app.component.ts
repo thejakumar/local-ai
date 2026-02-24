@@ -6,7 +6,7 @@ import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { HttpClientModule } from '@angular/common/http';
 import { ApiService } from './services/api.service';
-import { Message, ConversationSummary, RagSource, IngestedDocument } from './models/models';
+import { Message, ConversationSummary, RagSource, IngestedDocument, SseDoneEvent } from './models/models';
 
 @Component({
   selector: 'app-root',
@@ -79,6 +79,7 @@ sendMessage() {
       conversationId: this.currentConversationId,
       message: text,
       useRag: this.useRag,
+      ragMode: 'hybrid',
       model: this.selectedModel
     }).subscribe({
       next: (event) => {
@@ -98,6 +99,9 @@ sendMessage() {
         } else if (event.type === 'done') {
           this.ngZone.run(() => {
             aiMsg.streaming = false;
+            aiMsg.confidence = event.confidence;
+            aiMsg.citations = event.citations;
+            aiMsg.tokensUsed = event.tokensUsed;
             this.isStreaming = false;
             this.cdr.markForCheck();
             this.loadConversations();

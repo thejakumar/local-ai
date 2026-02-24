@@ -15,6 +15,8 @@ public interface IOllamaService
     Task<string> ChatAsync(
         List<OllamaMessage> messages,
         string? model = null,
+        double? temperature = null,
+        int? maxTokens = null,
         CancellationToken ct = default);
 }
 
@@ -23,18 +25,20 @@ public class OllamaService(
     IConfiguration config,
     ILogger<OllamaService> logger) : IOllamaService
 {
-    private readonly string _chatModel      = config["Ollama:ChatModel"] ?? "llama3.2";
-    private readonly double _temperature    = double.Parse(config["Ollama:Temperature"] ?? "0.7");
-    private readonly int    _maxTokens      = int.Parse(config["Ollama:MaxTokens"] ?? "4096");
+    private readonly string _chatModel   = config["Ollama:ChatModel"] ?? "llama3.2";
+    private readonly double _temperature = double.Parse(config["Ollama:Temperature"] ?? "0.7");
+    private readonly int    _maxTokens   = int.Parse(config["Ollama:MaxTokens"] ?? "4096");
+    private readonly int?   _contextWindow = int.TryParse(config["Ollama:ContextWindow"], out var cw) ? cw : null;
 
-    // ── Non-streaming (for short completions) ────────
     public async Task<string> ChatAsync(
         List<OllamaMessage> messages,
         string? model = null,
+        double? temperature = null,
+        int? maxTokens = null,
         CancellationToken ct = default)
     {
         var http = httpFactory.CreateClient("ollama");
-        var request = BuildRequest(messages, model, stream: false);
+        var request = BuildRequest(messages, model, stream: false, temperature, maxTokens);
 
         var response = await http.PostAsJsonAsync("/api/chat", request, ct);
         response.EnsureSuccessStatusCode();
@@ -43,7 +47,6 @@ public class OllamaService(
         return body.GetProperty("message").GetProperty("content").GetString() ?? "";
     }
 
-    // ── Streaming chat ────────────────────────────────
     public async IAsyncEnumerable<string> StreamChatAsync(
         List<OllamaMessage> messages,
         string? model = null,
@@ -92,14 +95,19 @@ public class OllamaService(
         }
     }
 
-    // ── Helpers ───────────────────────────────────────
-    private OllamaChatRequest BuildRequest(
+    private OllamaChatRequestExtended BuildRequest(
         List<OllamaMessage> messages,
         string? model,
-        bool stream) => new(
+        bool stream,
+        double? temperature = null,
+        int? maxTokens = null) => new(
             Model: model ?? _chatModel,
             Messages: messages,
             Stream: stream,
-            Options: new(_temperature, _maxTokens)
+            Options: new OllamaOptionsExtended(
+                Temperature: temperature ?? _temperature,
+                NumPredict: maxTokens ?? _maxTokens,
+                NumCtx: _contextWindow
+            )
         );
 }

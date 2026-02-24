@@ -13,15 +13,16 @@ public class Document
     public int ChunkIndex { get; set; }
     public string Content { get; set; } = "";
     public Vector? Embedding { get; set; }
-    
-    /// <summary>
-    /// PostgreSQL tsvector for full-text search (BM25-like)
-    /// </summary>
+
     [JsonIgnore]
     public string SearchVector { get; set; } = "";
-    
+
     public Dictionary<string, string> Metadata { get; set; } = [];
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+
+    // Parent-child chunking support
+    public Guid? ParentChunkId { get; set; }
+    public int ChunkLevel { get; set; } = 0;  // 0 = parent/flat, 1 = child
 }
 
 public class Conversation
@@ -31,6 +32,7 @@ public class Conversation
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
     public List<Message> Messages { get; set; } = [];
+    public string? Summary { get; set; }
 }
 
 public class Message
@@ -38,10 +40,19 @@ public class Message
     public Guid Id { get; set; } = Guid.NewGuid();
     public Guid ConversationId { get; set; }
     public Conversation Conversation { get; set; } = null!;
-    public string Role { get; set; } = "";        // user | assistant
+    public string Role { get; set; } = "";
     public string Content { get; set; } = "";
     public string? Model { get; set; }
     public int? TokensUsed { get; set; }
+    public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+}
+
+public class MessageFeedback
+{
+    public Guid Id { get; set; } = Guid.NewGuid();
+    public Guid MessageId { get; set; }
+    public Message Message { get; set; } = null!;
+    public bool Helpful { get; set; }
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 }
 
@@ -51,14 +62,21 @@ public record ChatRequest(
     Guid? ConversationId,
     string Message,
     bool UseRag = true,
-    string? RagMode = "hybrid",  // hybrid | semantic | keyword
-    string? Model = null
+    string? RagMode = "hybrid",
+    string? Model = null,
+    string? FileTypeFilter = null,
+    string? FileNameFilter = null
 );
 
 public record IngestRequest(
     string FileName,
     string Content,
     string FileType = "text"
+);
+
+public record FeedbackRequest(
+    Guid MessageId,
+    bool Helpful
 );
 
 // ── Response DTOs ────────────────────────────────────
@@ -75,7 +93,7 @@ public record RagSource(
     string FileName,
     string Snippet,
     double Similarity,
-    string SearchType = "semantic"  // semantic | keyword | hybrid
+    string SearchType = "semantic"
 );
 
 public record ConversationSummary(
